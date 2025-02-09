@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 BUFFER_SIZE = 4096  # Size of each data chunk
 SEPARATOR = "<SEPARATOR>"  # Separator for filename and filesize
+DATA_DIR = "./data"
 
 
 def send_file(filename, host, port):
@@ -39,7 +40,11 @@ def send_file(filename, host, port):
 
         # Send filename and filesize metadata
         s.send(f"{os.path.basename(filename)}{SEPARATOR}{filesize}".encode())
-        s.recv(1)
+        #s.recv(1)
+        ack = s.recv(1)
+        if not ack:
+            logging.error("No acknowledgment received from receiver. Aborting.")
+            return
 
         # Open and send the file in chunks
         with open(filename, "rb") as f:
@@ -74,13 +79,17 @@ def receive_file(host, port):
                 metadata_bytes += conn.recv(BUFFER_SIZE)
             received = metadata_bytes.decode()
             conn.send(b'1')
+            if not conn.recv(1):
+                logging.error("Acknowledgment failed. Aborting.")
+                return
             filename, filesize = received.split(SEPARATOR, 1)
             filename = os.path.basename(filename)
             filesize = int(filesize)
 
             logging.info(f"Receiving {filename} ({filesize} bytes)...")
 
-            with open(filename+"_", "wb") as f:
+            save_path = os.path.join(DATA_DIR, os.path.basename(filename))
+            with open(save_path, "wb") as f:
                 received_size = 0
                 while received_size < filesize:
                     chunk = conn.recv(BUFFER_SIZE)
