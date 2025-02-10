@@ -13,14 +13,12 @@ import os
 import argparse
 import logging
 
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 BUFFER_SIZE = 4096  # Size of each data chunk
 SEPARATOR = "<SEPARATOR>"  # Separator for filename and filesize
-DATA_DIR = "./data"
-
+DATA_DIR = "./data"  # Directory to store received files
 
 def send_file(filename, host, port):
     """
@@ -40,34 +38,36 @@ def send_file(filename, host, port):
 
         # Send filename and filesize metadata
         s.send(f"{os.path.basename(filename)}{SEPARATOR}{filesize}".encode())
-        #s.recv(1)
-        ack = s.recv(1)
+        """
+        ack = s.recv(1)  # Wait for acknowledgment
         if not ack:
             logging.error("No acknowledgment received from receiver. Aborting.")
             return
+        """
 
-        # Open and send the file in chunks
+        # Open the file and send data in chunks
         with open(filename, "rb") as f:
             while True:
                 chunk = f.read(BUFFER_SIZE)
                 if not chunk:
-                    break
-                s.sendall(chunk)
+                    break  # Stop when file is completely read
+                num = s.send(chunk)  # Ensure entire chunk is sent
 
         logging.info("File sent successfully.")
 
-
 def receive_file(host, port):
     """
-    Receives a file over a TCP connection.
+    Receives a file over a TCP connection and saves it to the data directory.
 
     Args:
         host (str): IP address to listen on.
         port (int): Port number to listen on.
     """
+    os.makedirs(DATA_DIR, exist_ok=True)  # Ensure the data directory exists
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
-        s.listen(1)
+        s.listen(1)  # Listen for incoming connections
 
         logging.info(f"Listening on {host}:{port}...")
         conn, addr = s.accept()
@@ -76,30 +76,33 @@ def receive_file(host, port):
             logging.info(f"Connection from {addr}")
             metadata_bytes = b""
             while SEPARATOR.encode() not in metadata_bytes:
-                metadata_bytes += conn.recv(BUFFER_SIZE)
-            received = metadata_bytes.decode()
-            conn.send(b'1')
-            if not conn.recv(1):
+                metadata_bytes += conn.recv(BUFFER_SIZE)  # Receive metadata
+            received = metadata_bytes.decode(errors="ignore")
+            """
+            conn.send(b'1')  # Send acknowledgment
+            if not conn.recv(1):  # Check if acknowledgment is received
                 logging.error("Acknowledgment failed. Aborting.")
                 return
+            """
+
+            # Extract filename and filesize from metadata
             filename, filesize = received.split(SEPARATOR, 1)
-            filename = os.path.basename(filename)
+            filename = os.path.basename(filename)  # Ensure safe filename
             filesize = int(filesize)
 
             logging.info(f"Receiving {filename} ({filesize} bytes)...")
 
-            save_path = os.path.join(DATA_DIR, os.path.basename(filename))
+            save_path = os.path.join(DATA_DIR, filename)  # Define save path
             with open(save_path, "wb") as f:
                 received_size = 0
                 while received_size < filesize:
-                    chunk = conn.recv(BUFFER_SIZE)
+                    chunk = conn.recv(BUFFER_SIZE)  # Receive file data
                     if not chunk:
-                        break
-                    f.write(chunk)
-                    received_size += len(chunk)
+                        break  # Stop if connection is closed
+                    f.write(chunk)  # Write chunk to file
+                    received_size += len(chunk)  # Update received size
 
             logging.info("File received successfully.")
-
 
 if __name__ == "__main__":
     # Parse command-line arguments
