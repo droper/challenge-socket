@@ -3,36 +3,37 @@ import socket
 import asyncio
 import threading
 import os
-from transmitter import send_file, receive_file, DATA_DIR
+from transmitter import send_file, receive_file, DATA_DIR, BUFFER_SIZE
 
 event_server_started = threading.Event()
-event_send_completed = threading.Event()
 
 
 class TestFileTransfer(unittest.TestCase):
     SERVER_HOST = "127.0.0.1"
     SERVER_PORT = 5001
-    TEST_FILE = "testfile.txt"
-    RECEIVED_FILE = os.path.join(DATA_DIR, "testfile.txt")
+    TEST_FILE = "testfile.bin"  # Using a binary file for robust testing
+    RECEIVED_FILE = os.path.join(DATA_DIR, "testfile.bin")
 
     @classmethod
     def setUpClass(cls):
         """Set up the test environment by creating a test file."""
         os.makedirs(DATA_DIR, exist_ok=True)
-        with open(cls.TEST_FILE, "w") as f:
-            f.write("This is a test file for transmission.")
+        with open(cls.TEST_FILE, "wb") as f:
+            f.write(os.urandom(BUFFER_SIZE*2))  # Create a random binary file of 1KB
 
     @classmethod
     def tearDownClass(cls):
         """Clean up test files after tests are done."""
-        if os.path.exists(cls.TEST_FILE):
-            os.remove(cls.TEST_FILE)
-        if os.path.exists(cls.RECEIVED_FILE):
-            os.remove(cls.RECEIVED_FILE)
+        for file in [cls.TEST_FILE, cls.RECEIVED_FILE]:
+            if os.path.exists(file):
+                os.remove(file)
 
     def start_receiver(self):
         """Start the receiver and signal when ready."""
-        event_server_started.set()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((self.SERVER_HOST, self.SERVER_PORT))
+            s.listen(1)
+            event_server_started.set()  # Signal that receiver is ready
         receive_file(self.SERVER_HOST, self.SERVER_PORT)
 
     async def async_test_file_transfer(self):
@@ -44,18 +45,14 @@ class TestFileTransfer(unittest.TestCase):
         # Wait for server to be ready
         event_server_started.wait()
 
-        # Send the file
+        # Send the file asynchronously
         await asyncio.to_thread(send_file, self.TEST_FILE, self.SERVER_HOST, self.SERVER_PORT)
-        event_send_completed.set()
 
-        # Wait for file transfer completion
-        event_send_completed.wait()
-
-        # Check if the received file exists
+        # Ensure the received file exists
         self.assertTrue(os.path.exists(self.RECEIVED_FILE))
 
         # Compare contents of original and received file
-        with open(self.TEST_FILE, "r") as f1, open(self.RECEIVED_FILE, "r") as f2:
+        with open(self.TEST_FILE, "rb") as f1, open(self.RECEIVED_FILE, "rb") as f2:
             self.assertEqual(f1.read(), f2.read())
 
     def test_file_transfer(self):
